@@ -12,12 +12,18 @@
   "dependencies": {
     "@fontsource/dancing-script": "^5.1.1",
     "@radix-ui/react-tooltip": "^1.1.8",
+    "axios": "^1.11.0",
+    "framer-motion": "^11.18.2",
+    "lucide-react": "^0.539.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-icons": "^5.4.0",
     "react-router-dom": "^7.1.5",
     "react-simple-typewriter": "^5.0.1",
-    "react-typed": "^2.0.12"
+    "react-toastify": "^11.0.5",
+    "react-typed": "^2.0.12",
+    "recharts": "^3.1.0",
+    "sweetalert2": "^11.22.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
