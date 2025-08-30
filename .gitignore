@@ -1,24 +1,15 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
+# --- Vite / React ---
 node_modules
 dist
-dist-ssr
-*.local
+.vite
+coverage
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Env files (never commit secrets)
+.env
+.env.*
+
+# Editor / OS noise
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+.idea/
+.vscode/
