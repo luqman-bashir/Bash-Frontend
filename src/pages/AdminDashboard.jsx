@@ -1,5 +1,5 @@
 // src/pages/AdminDashboard.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   RefreshCcw,
@@ -12,8 +12,8 @@ import {
   Save,
   X,
 } from "lucide-react";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
+import { toast } from "react-toastify";           // minimal success/error toasts only
+import "react-toastify/dist/ReactToastify.css";   // styles (container lives in main.jsx)
 import { useSaleContext } from "../contexts/SaleContext.jsx";
 
 import {
@@ -34,7 +34,7 @@ import {
  * AdminDashboard.jsx — mobile-first responsive
  * - Expenses = OpEx only (non-COGS)
  * - Net = Paid − (OpEx + COGS purchases)
- * - Net Profit (card) = (COGS Sales − COGS Cost) − OpEx   ← classic GP – OpEx
+ * - Net Profit (card) = (COGS Sales − COGS Cost) − OpEx
  */
 
 const API_BASE =
@@ -78,40 +78,7 @@ export default function AdminDashboard() {
 
   const [showCogsModal, setShowCogsModal] = useState(false);
 
-  // one active loading toast at a time
-  const LOAD_TOAST_ID = "range-load";
-  const loadingToastRef = useRef(null);
-
-  const beginLoadingToast = (msg) => {
-    if (loadingToastRef.current) {
-      toast.dismiss(loadingToastRef.current);
-      loadingToastRef.current = null;
-    }
-    loadingToastRef.current = toast.loading(msg, { toastId: LOAD_TOAST_ID });
-  };
-  const resolveLoadingToast = (msg = "Ready") => {
-    if (!loadingToastRef.current) return;
-    toast.update(loadingToastRef.current, {
-      render: msg,
-      type: "success",
-      isLoading: false,
-      autoClose: 2200,
-      closeOnClick: true,
-    });
-    loadingToastRef.current = null;
-  };
-  const rejectLoadingToast = (errMsg = "Failed") => {
-    if (!loadingToastRef.current) return;
-    toast.update(loadingToastRef.current, {
-      render: errMsg,
-      type: "error",
-      isLoading: false,
-      autoClose: 3000,
-      closeOnClick: true,
-    });
-    loadingToastRef.current = null;
-  };
-
+  // ---- Load (no loading/spinner toasts; just state) --------------------
   const load = async (range = filters) => {
     setLoading(true);
     try {
@@ -142,52 +109,34 @@ export default function AdminDashboard() {
     }
   };
 
-  const runWithLoadingToast = async (fn, { pending, success, error }) => {
-    beginLoadingToast(pending);
-    try {
-      const res = await fn();
-      resolveLoadingToast(success);
-      return res;
-    } catch (e) {
-      rejectLoadingToast(e?.message || error || "Failed");
-      throw e;
-    }
-  };
-
   useEffect(() => {
-    runWithLoadingToast(() => load(), {
-      pending: "Loading…",
-      success: "Ready",
-      error: "Failed to load",
-    }).catch(() => {});
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const applyRange = (range, toastLabel) => {
+  const applyRange = (range) => {
     setFilters(range);
-    return runWithLoadingToast(() => load(range), {
-      pending: `Loading ${toastLabel}…`,
-      success: `Showing ${toastLabel}`,
-      error: "Failed",
-    });
+    return load(range);
   };
 
-  const onToday = () => applyRange({ date_from: todayKE(), date_to: todayKE() }, "today");
-  const onYesterday = () => applyRange({ date_from: yesterdayKE(), date_to: yesterdayKE() }, "yesterday");
+  const onToday = () => applyRange({ date_from: todayKE(), date_to: todayKE() });
+  const onYesterday = () => applyRange({ date_from: yesterdayKE(), date_to: yesterdayKE() });
   const onLast7 = () => {
     const { start, end } = last7DaysKE();
-    return applyRange({ date_from: start, date_to: end }, "last 7 days");
+    return applyRange({ date_from: start, date_to: end });
   };
-  const onApply = () =>
-    runWithLoadingToast(() => load(), { pending: "Applying…", success: "Updated", error: "Failed" });
-  const onRefresh = () =>
-    runWithLoadingToast(() => load(), { pending: "Refreshing…", success: "Up to date", error: "Refresh failed" });
-  const onExportSalesPDF = () =>
-    toast.promise(exportSalesItemsPDF({ date_from: filters.date_from, date_to: filters.date_to }), {
-      pending: "Generating PDF…",
-      success: "PDF downloaded",
-      error: "Export failed",
-    });
+  const onApply = () => load();
+  const onRefresh = () => load();
+
+  // ---- Export PDF (success/error only; no pending spinner) -----
+  const onExportSalesPDF = async () => {
+    try {
+      await exportSalesItemsPDF({ date_from: filters.date_from, date_to: filters.date_to });
+      toast.success("PDF downloaded");
+    } catch (e) {
+      toast.error("Export failed");
+    }
+  };
 
   // flexible pickers for backend shape differences
   const pickDate = (r) => r?.date || r?.day || r?.sale_date || "";
@@ -332,7 +281,7 @@ export default function AdminDashboard() {
     [totalSales.paid, totalSales.balance, opExTotal]
   );
 
-  /* ---------- COGS purchase modal POST helper ---------- */
+  /* ---------- COGS purchase POST helper ---------- */
   const getDefaultToken = () => {
     try {
       return (
@@ -380,8 +329,16 @@ export default function AdminDashboard() {
       throw new Error(msg);
     }
     await load(filters);
-    toast.success("COGS recorded");
+    toast.success("COGS recorded");        // success only (no spinner)
   };
+
+  // --- Quick range active detection ---
+  const t = todayKE();
+  const y = yesterdayKE();
+  const { start: l7s, end: l7e } = last7DaysKE();
+  const isTodayActive = filters.date_from === t && filters.date_to === t;
+  const isYesterdayActive = filters.date_from === y && filters.date_to === y;
+  const isLast7Active = filters.date_from === l7s && filters.date_to === l7e;
 
   /* ---------- UI ---------- */
   return (
@@ -401,12 +358,39 @@ export default function AdminDashboard() {
 
         {/* Actions: wrap + horizontal scroll on tiny screens */}
         <div className="flex flex-nowrap overflow-x-auto no-scrollbar gap-2 -mx-1 px-1">
-          <ToolbarBtn onClick={onRefresh}><RefreshCcw size={16} /> Refresh</ToolbarBtn>
-          <ToolbarBtn onClick={onToday} title="Today (Africa/Nairobi)"><CalendarDays size={16} /> Today</ToolbarBtn>
-          <ToolbarBtn onClick={onYesterday} title="Yesterday (Africa/Nairobi)"><CalendarDays size={16} /> Yesterday</ToolbarBtn>
-          <ToolbarBtn onClick={onLast7} title="Last 7 Days (Africa/Nairobi)"><CalendarDays size={16} /> Last 7 Days</ToolbarBtn>
-          <ToolbarBtn onClick={() => setShowCogsModal(true)}><Package size={16} /> Record COGS</ToolbarBtn>
-          <ToolbarBtn onClick={onExportSalesPDF}><Download size={16} /> Export Sales PDF</ToolbarBtn>
+          <ToolbarBtn onClick={onRefresh} disabled={loading}>
+            <RefreshCcw size={16} /> Refresh
+          </ToolbarBtn>
+          <ToolbarBtn
+            onClick={onToday}
+            title="Today (Africa/Nairobi)"
+            active={isTodayActive}
+            disabled={loading}
+          >
+            <CalendarDays size={16} /> Today
+          </ToolbarBtn>
+          <ToolbarBtn
+            onClick={onYesterday}
+            title="Yesterday (Africa/Nairobi)"
+            active={isYesterdayActive}
+            disabled={loading}
+          >
+            <CalendarDays size={16} /> Yesterday
+          </ToolbarBtn>
+          <ToolbarBtn
+            onClick={onLast7}
+            title="Last 7 Days (Africa/Nairobi)"
+            active={isLast7Active}
+            disabled={loading}
+          >
+            <CalendarDays size={16} /> Last 7 Days
+          </ToolbarBtn>
+          <ToolbarBtn onClick={() => setShowCogsModal(true)} disabled={loading}>
+            <Package size={16} /> Record COGS
+          </ToolbarBtn>
+          <ToolbarBtn onClick={onExportSalesPDF} disabled={loading}>
+            <Download size={16} /> Export Sales PDF
+          </ToolbarBtn>
         </div>
       </header>
 
@@ -428,7 +412,7 @@ export default function AdminDashboard() {
             onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))}
             className="rounded-xl bg-black/20 border border-white/10 px-3 py-2 text-xs sm:text-sm"
           />
-          <button className="rounded-xl border border-white/10 px-3 py-2 text-xs sm:text-sm" onClick={onApply}>
+          <button className="rounded-xl border border-white/10 px-3 py-2 text-xs sm:text-sm" onClick={onApply} disabled={loading}>
             Apply
           </button>
         </div>
@@ -629,24 +613,31 @@ export default function AdminDashboard() {
               await saveCogsPurchase(payload);
               setShowCogsModal(false);
             } catch (e) {
-              toast.error(String(e.message || "Failed to save COGS"));
+              toast.error(String(e.message || "Failed to save COGS"));  // error only
             }
           }}
         />
       )}
-
-      <ToastContainer position="top-right" theme="dark" autoClose={2200} limit={1} />
+      {/* No <ToastContainer /> here */}
     </div>
   );
 }
 
 /* ---------------- Small UI helpers ---------------- */
-function ToolbarBtn({ children, onClick, title }) {
+function ToolbarBtn({ children, onClick, title, active = false, disabled = false }) {
+  const base =
+    "inline-flex items-center gap-2 rounded-2xl px-3 py-2 border transition-colors shrink-0";
+  const normal = "border-white/10 hover:bg-white/5 text-white";
+  const selected = "bg-white text-gray-900 border-white";
+  const disabledCls = disabled ? "opacity-60 cursor-not-allowed" : "";
+
   return (
     <button
-      className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5 shrink-0"
+      className={`${base} ${active ? selected : normal} ${disabledCls}`}
       onClick={onClick}
       title={title}
+      disabled={disabled}
+      aria-pressed={active}
     >
       {children}
     </button>
@@ -717,13 +708,12 @@ function MoneyTooltip({ active, payload, label }) {
 function CogsModal({ onClose, onSubmit }) {
   const [form, setForm] = useState(() => ({
     date: todayKE(),
-    description: "COGS purchase",
+    description: "",
     payment_method: "Cash",
     amount: "",
     bottle_size_id: "",
     unit_cost_carton: "",
   }));
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const canSave =
     String(form.amount).trim().length > 0 &&
@@ -782,8 +772,6 @@ function CogsModal({ onClose, onSubmit }) {
               >
                 <option value="Cash">Cash</option>
                 <option value="M-Pesa">M-Pesa</option>
-                <option value="Bank">Bank</option>
-                <option value="Other">Other</option>
               </select>
             </label>
 
@@ -801,12 +789,14 @@ function CogsModal({ onClose, onSubmit }) {
 
           <button
             className="text-left text-xs text-gray-400 underline underline-offset-4"
-            onClick={() => setShowAdvanced((v) => !v)}
+            onClick={() =>
+              setForm((s) => ({ ...s, _adv: !s._adv }))
+            }
           >
-            {showAdvanced ? "Hide" : "Show"} optional: update default cost for a bottle size
+            {form._adv ? "Hide" : "Show"} optional: update default cost for a bottle size
           </button>
 
-          {showAdvanced && (
+          {form._adv && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <label className="grid gap-1">
                 <span className="text-xs text-gray-400">Bottle Size ID (optional)</span>
@@ -836,12 +826,10 @@ function CogsModal({ onClose, onSubmit }) {
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
-          <button className="rounded-xl border border-white/10 px-3 py-2" onClick={onClose}>
-            Cancel
-          </button>
+
           <button
             disabled={!canSave}
-            className="inline-flex items-center gap-2 rounded-xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg:white bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
             onClick={() =>
               onSubmit({
                 date: form.date,
@@ -932,3 +920,5 @@ style.innerHTML = `
 .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
 `;
 if (typeof document !== "undefined") document.head.appendChild(style);
+
+

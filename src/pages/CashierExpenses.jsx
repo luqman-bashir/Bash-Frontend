@@ -20,6 +20,28 @@ const todayStr = () => {
   return `${y}-${m}-${d}`;
 };
 
+const daysAgoStr = (n) => {
+  const now = new Date();
+  now.setDate(now.getDate() - n);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Nairobi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const y = parts.find((p) => p.type === "year")?.value ?? "";
+  const m = parts.find((p) => p.type === "month")?.value ?? "";
+  const d = parts.find((p) => p.type === "day")?.value ?? "";
+  return `${y}-${m}-${d}`;
+};
+
+const yesterdayStr = () => daysAgoStr(1);
+const last7DaysStr = () => {
+  const end = todayStr();
+  const start = daysAgoStr(6);
+  return { start, end };
+};
+
 const fmtMoney = (v) =>
   v === null || v === undefined || Number.isNaN(Number(v))
     ? "—"
@@ -100,6 +122,14 @@ export default function CashierExpenses() {
   const [editing, setEditing] = useState(null);
   const [showCogsModal, setShowCogsModal] = useState(false);
 
+  // --- Quick range active detection (like AdminDashboard) ---
+  const t = todayStr();
+  const y = yesterdayStr();
+  const { start: l7s, end: l7e } = last7DaysStr();
+  const isTodayActive = filters.date_from === t && filters.date_to === t;
+  const isYesterdayActive = filters.date_from === y && filters.date_to === y;
+  const isLast7Active = filters.date_from === l7s && filters.date_to === l7e;
+
   // ---- API helper ----
   async function api(path, { method = "GET", body } = {}) {
     const res = await fetch(API_BASE + path, {
@@ -124,15 +154,22 @@ export default function CashierExpenses() {
   }
 
   // ---- loaders ----
-  const list = async () => {
+  const list = async (rangeOverride) => {
     if (!token) return;
     setLoading(true);
     setError(null);
     try {
+      const df = rangeOverride?.date_from ?? filters.date_from ?? "";
+      const dt = rangeOverride?.date_to ?? filters.date_to ?? "";
+      const incDel =
+        rangeOverride?.include_deleted !== undefined
+          ? String(!!rangeOverride.include_deleted)
+          : String(!!filters.include_deleted);
+
       const qs = new URLSearchParams({
-        date_from: filters.date_from || "",
-        date_to: filters.date_to || "",
-        include_deleted: String(!!filters.include_deleted),
+        date_from: df,
+        date_to: dt,
+        include_deleted: incDel,
       });
       const expRes = await api(`/expenses?${qs.toString()}`);
       const expData = Array.isArray(expRes?.data) ? expRes.data : [];
@@ -147,8 +184,23 @@ export default function CashierExpenses() {
 
   const loadToday = async () => {
     const t = todayStr();
-    setFilters((f) => ({ ...f, date_from: t, date_to: t, q: "", include_deleted: false }));
-    await list();
+    const next = { ...filters, date_from: t, date_to: t, q: "", include_deleted: false };
+    setFilters(next);
+    await list(next);
+  };
+
+  const loadYesterday = async () => {
+    const y = yesterdayStr();
+    const next = { ...filters, date_from: y, date_to: y, q: "", include_deleted: false };
+    setFilters(next);
+    await list(next);
+  };
+
+  const loadLast7Days = async () => {
+    const { start, end } = last7DaysStr();
+    const next = { ...filters, date_from: start, date_to: end, q: "", include_deleted: false };
+    setFilters(next);
+    await list(next);
   };
 
   useEffect(() => {
@@ -272,13 +324,15 @@ export default function CashierExpenses() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5"
-            onClick={() => loadToday().catch(() => {})}
-            title="Today"
-          >
+          <QuickBtn onClick={() => loadToday().catch(() => {})} active={isTodayActive} disabled={loading} title="Today">
             <RefreshCcw size={16} /> Today
-          </button>
+          </QuickBtn>
+          <QuickBtn onClick={() => loadYesterday().catch(() => {})} active={isYesterdayActive} disabled={loading} title="Yesterday">
+            <RefreshCcw size={16} /> Yesterday
+          </QuickBtn>
+          <QuickBtn onClick={() => loadLast7Days().catch(() => {})} active={isLast7Active} disabled={loading} title="Last 7 Days">
+            <RefreshCcw size={16} /> Last 7 Days
+          </QuickBtn>
 
           <button
             className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5"
@@ -318,7 +372,7 @@ export default function CashierExpenses() {
             value={filters.q}
             onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
             placeholder="Search description (client-side)"
-            className="rounded-xl bg-black/20 border border-white/10 px-3 py-2 text-sm w-full sm:w-auto"
+            className="rounded-xl bg-black/20 border border-white/10 px-3 py-2 text-sm w/full sm:w-auto"
           />
           <input
             type="date"
@@ -480,6 +534,25 @@ export default function CashierExpenses() {
 
 /* -------- Subcomponents -------- */
 
+function QuickBtn({ children, onClick, title, active = false, disabled = false }) {
+  const base =
+    "inline-flex items-center gap-2 rounded-2xl px-3 py-2 border transition-colors shrink-0";
+  const normal = "border-white/10 hover:bg-white/5 text-white";
+  const selected = "bg-white text-gray-900 border-white";
+  const disabledCls = disabled ? "opacity-60 cursor-not-allowed" : "";
+  return (
+    <button
+      className={`${base} ${active ? selected : normal} ${disabledCls}`}
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      aria-pressed={active}
+    >
+      {children}
+    </button>
+  );
+}
+
 function Stat({ label, value }) {
   return (
     <div className="rounded-2xl border border-white/10 p-3 sm:p-4">
@@ -564,9 +637,7 @@ function ExpenseModal({ editing, onClose, onSubmit }) {
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
-          <button className="rounded-xl border border-white/10 px-3 py-2" onClick={onClose}>
-            Cancel
-          </button>
+
           <button
             disabled={!canSave}
             className="inline-flex items-center gap-2 rounded-xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
@@ -591,7 +662,7 @@ function ExpenseModal({ editing, onClose, onSubmit }) {
 function CogsModal({ onClose, onSubmit }) {
   const [form, setForm] = useState(() => ({
     date: todayStr(),
-    description: "COGS purchase",
+    description: "",
     payment_method: "Cash",
     amount: "",
     bottle_size_id: "",
@@ -656,8 +727,6 @@ function CogsModal({ onClose, onSubmit }) {
               >
                 <option value="Cash">Cash</option>
                 <option value="M-Pesa">M-Pesa</option>
-                <option value="Bank">Bank</option>
-                <option value="Other">Other</option>
               </select>
             </label>
 
@@ -741,3 +810,4 @@ const style = document.createElement("style");
 style.innerHTML = `.icon-btn{display:inline-flex;align-items:center;gap:.25rem;border:1px solid hsl(0 0% 100% / 0.1);background:transparent;padding:.35rem;border-radius:.75rem}
 .icon-btn:hover{background:hsl(0 0% 100% / 0.06)}`;
 if (typeof document !== "undefined") document.head.appendChild(style);
+

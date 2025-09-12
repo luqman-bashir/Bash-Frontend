@@ -257,25 +257,7 @@ export default function PackagingAdmin() {
       )}
 
       {/* Responsive Toasts — tightly sized on small screens */}
-      <ToastContainer
-        position="top-center"
-        theme="dark"
-        newestOnTop
-        autoClose={2200}
-        limit={1}
-        closeButton={false}
-        hideProgressBar
-        draggable={false}
-        pauseOnFocusLoss={false}
-        pauseOnHover
-        style={{ width: "100%", padding: 0 }}
-        toastClassName={() =>
-          // narrow, small text, center on mobile; allow wider on larger screens
-          "pointer-events-auto mx-auto !rounded-2xl !p-3 !min-h-0 !shadow-xl text-sm " +
-          "w-[92vw] max-w-[320px] sm:max-w-[380px] sm:w-auto"
-        }
-        bodyClassName={() => "m-0 p-0 leading-snug"}
-      />
+
     </div>
   );
 }
@@ -956,3 +938,4 @@ style.innerHTML = `
 .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
 `;
 if (typeof document !== "undefined") document.head.appendChild(style);
+

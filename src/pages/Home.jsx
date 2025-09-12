@@ -82,7 +82,7 @@ export default function Home() {
             </h1>
 
             <p className="mt-4 text-white/70">
-              Create sales, record payments, track stock and packaging, manage users and approvals —
+              Create sales, record payments, track stock and packaging, manage users and approvals,
               all in one place. Built for the bustle of the floor and the clarity of the office.
             </p>
 
@@ -114,23 +114,6 @@ export default function Home() {
                 </button>
               )}
             </div>
-
-            {/* intrigue badges with shimmer */}
-            <ul className="mt-6 grid grid-cols-1 gap-2 text-xs text-white/70 sm:grid-cols-3">
-              {[
-                "Device approval",
-                "80 mm receipt printing",
-                "Docker-ready deploys",
-              ].map((txt) => (
-                <li
-                  key={txt}
-                  className="relative overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 backdrop-blur shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-                >
-                  <span className="absolute -left-10 top-0 h-full w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-[shimmer_2.5s_linear_infinite]" />
-                  • {txt}
-                </li>
-              ))}
-            </ul>
           </div>
         </section>
       </main>
@@ -243,6 +226,15 @@ function LoginModal({ open, onRequestClose }) {
   const modalRef = useRef(null);
   const [shake, setShake] = useState(false);
 
+  // ✅ Single stable toast instance for this modal
+  const toastIdRef = useRef("login-toast");
+
+  // Auto-dismiss toast when modal closes or unmounts
+  useEffect(() => {
+    if (!open) toast.dismiss(toastIdRef.current);
+  }, [open]);
+  useEffect(() => () => toast.dismiss(toastIdRef.current), []);
+
   // allow close only if not submitting (let them close even if error)
   const canClose = !submitting;
   const guardedClose = useCallback(() => {
@@ -296,17 +288,24 @@ function LoginModal({ open, onRequestClose }) {
 
   const onSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return; // prevent double-submit
     setSubmitting(true);
     setError("");
 
-    const toastId = "login-toast";
-    toast.loading("Signing in…", { toastId });
+    const tid = toastIdRef.current;
+
+    // Show or reset the single loader toast
+    if (!toast.isActive(tid)) {
+      toast.loading("Signing in…", { toastId: tid });
+    } else {
+      toast.update(tid, { render: "Signing in…", isLoading: true });
+    }
 
     try {
       const res = await login({ email, password });
 
       if (res?.ok && res.user) {
-        toast.update(toastId, {
+        toast.update(tid, {
           render: `Welcome ${res.user?.name || res.user?.email || "back"}`,
           type: "success",
           isLoading: false,
@@ -324,10 +323,12 @@ function LoginModal({ open, onRequestClose }) {
       }
 
       if (res?.pendingApproval) {
-        toast.update(toastId, {
+        toast.update(tid, {
           render:
             res?.details?.error ||
-            "Device approval required. Ask overall admin to approve this device.",
+            `Device approval required. Ask overall admin${
+              res?.details?.request_id ? ` (Req #${res.details.request_id})` : ""
+            }.`,
           type: "info",
           isLoading: false,
           autoClose: 3600,
@@ -337,7 +338,7 @@ function LoginModal({ open, onRequestClose }) {
         const msg = res?.error || "Login failed";
         setError(msg);
         setShake(true);
-        toast.update(toastId, {
+        toast.update(tid, {
           render: msg,
           type: "error",
           isLoading: false,
@@ -347,10 +348,11 @@ function LoginModal({ open, onRequestClose }) {
       }
     } catch (err) {
       console.error("Login error", err);
-      setError("Login failed");
+      const msg = "Login failed";
+      setError(msg);
       setShake(true);
-      toast.update("login-toast", {
-        render: "Login failed",
+      toast.update(tid, {
+        render: msg,
         type: "error",
         isLoading: false,
         autoClose: 3600,
@@ -468,7 +470,7 @@ function LoginModal({ open, onRequestClose }) {
           </form>
 
           <p className="mt-4 text-center text-xs text-white/50">
-            Need access? Ask your overall admin to approve your device or create an account.
+            Need access? Ask the overall admin to approve your device.
           </p>
         </div>
       </div>

@@ -3,8 +3,77 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useUser } from "../contexts/UserContext.jsx";
 import {
   FiPlus, FiEdit2, FiLock, FiCheckCircle, FiXCircle,
-  FiRefreshCw, FiKey, FiUserX, FiUserCheck, FiSearch, FiTrash2
+  FiRefreshCw, FiUserX, FiUserCheck, FiSearch, FiTrash2, FiCheck
 } from "react-icons/fi";
+import Swal from "sweetalert2";
+import "sweetalert2/dist/sweetalert2.min.css";
+
+/** SweetAlert helpers (dark look + toast) */
+const swalBase = {
+  background: "#0f172a",       // slate-900
+  color: "#e2e8f0",            // slate-200
+  confirmButtonColor: "#10b981", // emerald-500
+  cancelButtonColor: "#334155",  // slate-700
+  customClass: { popup: "rounded-2xl" },
+};
+const Toast = Swal.mixin({
+  ...swalBase,
+  toast: true,
+  position: "top-end",
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true,
+});
+
+/** Ask for confirmation with SweetAlert2 */
+async function confirmAction({ title, text, confirmText = "Yes", icon = "question" }) {
+  const res = await Swal.fire({
+    ...swalBase,
+    title,
+    text,
+    icon,
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: "Cancel",
+    reverseButtons: true,
+  });
+  return res.isConfirmed;
+}
+
+/** Helpers */
+const isOverall = (u) =>
+  String(u?.role || "").toLowerCase() === "admin" &&
+  String(u?.admin_level || "").toLowerCase() === "overall";
+
+/** ✅ Kenya timezone formatter for device requests */
+const fmtKE = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Africa/Nairobi",
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+function formatKE(iso) {
+  try { return fmtKE.format(new Date(iso)); } catch { return iso || ""; }
+}
+
+/** ✅ Optional batch approve helper */
+async function approveAllVisible({ items, approveDevice, after }) {
+  const ids = (items || []).map(r => r.id);
+  if (!ids.length) return;
+  const ok = await confirmAction({
+    title: "Approve all visible requests?",
+    text: `This will approve ${ids.length} device(s).`,
+    confirmText: "Approve all",
+  });
+  if (!ok) return;
+  for (const id of ids) {
+    try { await approveDevice(id); } catch { /* ignore one-off failures */ }
+  }
+  await after?.();
+  Toast.fire({ icon: "success", title: `Approved ${ids.length} device(s)` });
+}
 
 /** Small UI helpers */
 function Section({ title, actions, children }) {
@@ -68,11 +137,6 @@ function Modal({ open, onClose, title, children }) {
   );
 }
 
-/** Helpers */
-const isOverall = (u) =>
-  String(u?.role || "").toLowerCase() === "admin" &&
-  String(u?.admin_level || "").toLowerCase() === "overall";
-
 /** Main page */
 export default function AdminUsers() {
   const {
@@ -81,7 +145,7 @@ export default function AdminUsers() {
     // users
     users, getUsers, createUser, updateUser, deleteUser, reactivateUser, resetPassword,
     // devices
-    deviceRequests, getDeviceRequests, approveByCode, rejectDeviceRequest,
+    deviceRequests, getDeviceRequests, approveDevice, rejectDeviceRequest,
     deviceSummary, getDeviceSummary,
   } = useUser();
 
@@ -96,22 +160,24 @@ export default function AdminUsers() {
   const [draft, setDraft] = useState({
     id: null, name: "", email: "", password: "",
     role: "cashier", admin_level: "normal", phone: "", image: "",
-    device_approved: false, is_active: true,
+    is_active: true,
   });
   const [pwDraft, setPwDraft] = useState({ user_id: null, password: "" });
 
-  const [approveCode, setApproveCode] = useState("");
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
   useEffect(() => {
+    // ✅ Only fetch admin-only device data if user is overall admin
     let ignore = false;
     (async () => {
       try {
         setLoading(true);
         setErr(""); setMsg("");
         await getUsers({ all: true });
-        await Promise.all([getDeviceRequests(), getDeviceSummary()]);
+        if (isOverallAdmin) {
+          await Promise.all([getDeviceRequests(), getDeviceSummary()]);
+        }
       } catch (e) {
         if (!ignore) setErr(e?.message || "Failed to load data");
       } finally {
@@ -119,7 +185,7 @@ export default function AdminUsers() {
       }
     })();
     return () => { ignore = true; };
-  }, [getUsers, getDeviceRequests, getDeviceSummary]);
+  }, [getUsers, getDeviceRequests, getDeviceSummary, isOverallAdmin]);
 
   const filteredUsers = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -171,7 +237,7 @@ export default function AdminUsers() {
                   setDraft({
                     id: null, name: "", email: "", password: "",
                     role: "cashier", admin_level: "normal",
-                    phone: "", image: "", device_approved: false, is_active: true,
+                    phone: "", image: "", is_active: true,
                   });
                   setCreateOpen(true); setErr(""); setMsg("");
                 }}
@@ -245,7 +311,6 @@ export default function AdminUsers() {
                                     admin_level: u.admin_level || "normal",
                                     phone: u.phone || "",
                                     image: u.image || "",
-                                    device_approved: !!u.device_approved,
                                     is_active: !!u.is_active,
                                     _overall: false,
                                   });
@@ -271,15 +336,24 @@ export default function AdminUsers() {
                                   className="rounded px-2 py-1 text-red-300 hover:bg-red-500/10"
                                   title="Deactivate (soft delete)"
                                   onClick={async () => {
-                                    if (!confirm(`Deactivate ${u.name}?`)) return;
+                                    const ok = await confirmAction({
+                                      title: "Deactivate user?",
+                                      text: `This will sign out ${u.name} and disable access.`,
+                                      confirmText: "Deactivate",
+                                      icon: "warning",
+                                    });
+                                    if (!ok) return;
+
                                     setErr(""); setMsg("");
                                     try {
                                       setLoading(true);
                                       await deleteUser(u.id);
                                       await getUsers({ all: true });
                                       setMsg(`Deactivated ${u.name}`);
+                                      Toast.fire({ icon: "success", title: `Deactivated ${u.name}` });
                                     } catch (e) {
                                       setErr(e?.message || "Failed to deactivate");
+                                      Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed to deactivate" });
                                     } finally {
                                       setLoading(false);
                                     }
@@ -298,8 +372,10 @@ export default function AdminUsers() {
                                       await reactivateUser(u.id);
                                       await getUsers({ all: true });
                                       setMsg(`Reactivated ${u.name}`);
+                                      Toast.fire({ icon: "success", title: `Reactivated ${u.name}` });
                                     } catch (e) {
                                       setErr(e?.message || "Failed to reactivate");
+                                      Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed to reactivate" });
                                     } finally {
                                       setLoading(false);
                                     }
@@ -326,120 +402,145 @@ export default function AdminUsers() {
         </Section>
       )}
 
-      {/* REQUESTS */}
+      {/* REQUESTS (Approve/Reject table) */}
       {tab === "requests" && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Section
-            title="Pending Device Requests"
-            actions={
+        <Section
+          title="Pending Device Requests"
+          actions={
+            <>
               <button
-                onClick={async () => { setErr(""); setMsg(""); setLoading(true);
-                  try { await getDeviceRequests(); setMsg("Refreshed"); } catch(e){ setErr(e?.message || "Failed"); }
-                  finally { setLoading(false); } }}
-                className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10"
+                onClick={async () => {
+                  setErr(""); setMsg(""); setLoading(true);
+                  try {
+                    await getDeviceRequests();
+                    setMsg("Refreshed");
+                    Toast.fire({ icon: "success", title: "Refreshed" });
+                  } catch (e) {
+                    setErr(e?.message || "Failed");
+                    Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed" });
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+                disabled={loading}
               >
                 <FiRefreshCw className={loading ? "animate-spin" : ""} /> Refresh
               </button>
-            }
-          >
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead>
-                  <tr className="text-left text-white/70">
-                    <th className="px-3 py-2">User</th>
-                    <th className="px-3 py-2">IP</th>
-                    <th className="px-3 py-2">User Agent</th>
-                    <th className="px-3 py-2">Requested</th>
-                    <th className="px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(deviceRequests || []).map((r) => (
-                    <tr key={r.id} className="border-t border-white/10 hover:bg-white/5">
-                      <td className="px-3 py-2">{r.user} <span className="text-white/40">#{r.user_id}</span></td>
-                      <td className="px-3 py-2">{r.ip}</td>
-                      <td className="px-3 py-2">
-                        <span title={r.user_agent} className="line-clamp-2 break-all text-white/80">{r.user_agent}</span>
-                      </td>
-                      <td className="px-3 py-2">{new Date(r.created_at).toLocaleString()}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            className="rounded px-2 py-1 text-red-300 hover:bg-red-500/10"
-                            title="Reject & remove"
-                            onClick={async () => {
-                              if (!confirm(`Reject this device request for ${r.user}?`)) return;
-                              setErr(""); setMsg("");
-                              try {
-                                setLoading(true);
-                                await rejectDeviceRequest(r.id);
-                                await getDeviceRequests();
-                                setMsg(`Rejected request for ${r.user}`);
-                              } catch (e) {
-                                setErr(e?.message || "Failed to reject");
-                              } finally {
-                                setLoading(false);
-                              }
-                            }}
-                          >
-                            <FiTrash2 />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {!deviceRequests?.length && (
-                    <tr>
-                      <td colSpan="5" className="px-3 py-8 text-center text-white/60">No pending device requests.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-
-          <Section title="Approve a Device by Code">
-            <p className="mb-3 text-sm text-white/70">
-              Paste the <strong>6-digit code</strong> sent via email. This approves the requesting device for that user.
-            </p>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setErr(""); setMsg("");
-                try {
-                  setLoading(true);
-                  const res = await approveByCode(approveCode.trim());
-                  setMsg(res?.message || "Approved.");
-                  setApproveCode("");
-                  await getUsers({ all: true });
-                  await getDeviceRequests();
-                  await getDeviceSummary();
-                } catch (e2) {
-                  setErr(e2?.message || "Failed to approve");
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              className="flex flex-col gap-3 sm:flex-row"
-            >
-              <div className="flex-1">
-                <TextInput
-                  value={approveCode}
-                  onChange={(e) => setApproveCode(e.target.value)}
-                  placeholder="Enter approval code"
-                  maxLength={12}
-                />
-              </div>
+              {/* ✅ Approve all visible */}
               <button
-                type="submit"
-                disabled={!approveCode.trim() || loading}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow hover:shadow-lg disabled:opacity-60"
+                onClick={() =>
+                  approveAllVisible({
+                    items: deviceRequests,
+                    approveDevice,
+                    after: async () => {
+                      await Promise.all([getDeviceRequests(), getDeviceSummary(), getUsers({ all: true })]);
+                    },
+                  })
+                }
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+                disabled={loading || !(deviceRequests || []).length}
               >
-                <FiKey /> Approve
+                <FiCheck /> Approve All
               </button>
-            </form>
-          </Section>
-        </div>
+            </>
+          }
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-sm">
+              <thead>
+                <tr className="text-left text-white/70">
+                  <th className="px-3 py-2">User</th>
+                  <th className="px-3 py-2">Req ID</th>
+                  <th className="px-3 py-2">IP</th>
+                  <th className="px-3 py-2">User Agent</th>
+                  <th className="px-3 py-2">Requested</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(deviceRequests || []).map((r) => (
+                  <tr key={r.id} className="border-t border-white/10 hover:bg-white/5">
+                    <td className="px-3 py-2">{r.user} <span className="text-white/40">#{r.user_id}</span></td>
+                    <td className="px-3 py-2">{r.id}</td>
+                    <td className="px-3 py-2">{r.ip}</td>
+                    <td className="px-3 py-2">
+                      <span title={r.user_agent} className="line-clamp-2 break-all text-white/80">{r.user_agent}</span>
+                    </td>
+                    {/* ✅ Kenya time */}
+                    <td className="px-3 py-2">{formatKE(r.created_at)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="rounded px-2 py-1 text-emerald-300 hover:bg-emerald-500/10"
+                          title="Approve this device"
+                          onClick={async () => {
+                            const ok = await confirmAction({
+                              title: "Approve device?",
+                              text: `Approve request #${r.id} for ${r.user}?`,
+                              confirmText: "Approve",
+                            });
+                            if (!ok) return;
+
+                            setErr(""); setMsg("");
+                            try {
+                              setLoading(true);
+                              await approveDevice(r.id);
+                              await Promise.all([getDeviceRequests(), getDeviceSummary(), getUsers({ all: true })]);
+                              setMsg(`Approved request #${r.id} for ${r.user}`);
+                              Toast.fire({ icon: "success", title: `Approved #${r.id}` });
+                            } catch (e) {
+                              setErr(e?.message || "Failed to approve");
+                              Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed to approve" });
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                        >
+                          <FiCheck /> Approve
+                        </button>
+                        <button
+                          className="rounded px-2 py-1 text-red-300 hover:bg-red-500/10"
+                          title="Reject & mark resolved"
+                          onClick={async () => {
+                            const ok = await confirmAction({
+                              title: "Reject device?",
+                              text: `Reject request #${r.id} for ${r.user}?`,
+                              confirmText: "Reject",
+                              icon: "warning",
+                            });
+                            if (!ok) return;
+
+                            setErr(""); setMsg("");
+                            try {
+                              setLoading(true);
+                              await rejectDeviceRequest(r.id);
+                              await getDeviceRequests();
+                              setMsg(`Rejected request for ${r.user}`);
+                              Toast.fire({ icon: "success", title: `Rejected #${r.id}` });
+                            } catch (e) {
+                              setErr(e?.message || "Failed to reject");
+                              Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed to reject" });
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                        >
+                          <FiTrash2 />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!deviceRequests?.length && (
+                  <tr>
+                    <td colSpan="6" className="px-3 py-8 text-center text-white/60">No pending device requests.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Section>
       )}
 
       {/* SUMMARY */}
@@ -448,10 +549,21 @@ export default function AdminUsers() {
           title="Approved Devices per User"
           actions={
             <button
-              onClick={async () => { setErr(""); setMsg(""); setLoading(true);
-                try { await getDeviceSummary(); setMsg("Refreshed"); } catch(e){ setErr(e?.message || "Failed"); }
-                finally { setLoading(false); } }}
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10"
+              onClick={async () => {
+                setErr(""); setMsg(""); setLoading(true);
+                try {
+                  await getDeviceSummary();
+                  setMsg("Refreshed");
+                  Toast.fire({ icon: "success", title: "Refreshed" });
+                } catch (e) {
+                  setErr(e?.message || "Failed");
+                  Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed" });
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+              disabled={loading}
             >
               <FiRefreshCw className={loading ? "animate-spin" : ""} /> Refresh
             </button>
@@ -485,6 +597,7 @@ export default function AdminUsers() {
           draft={draft} setDraft={setDraft}
           canSetOverall={false}
           lockRoleAdminActive={false}
+          onCancel={() => setCreateOpen(false)}
           onSubmit={async () => {
             setErr(""); setMsg("");
             try {
@@ -501,8 +614,10 @@ export default function AdminUsers() {
               await getUsers({ all: true });
               setMsg(`Created ${draft.name}`);
               setCreateOpen(false);
+              Toast.fire({ icon: "success", title: `Created ${draft.name}` });
             } catch (e) {
               setErr(e?.message || "Failed to create user");
+              Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed to create user" });
             } finally {
               setLoading(false);
             }
@@ -517,6 +632,7 @@ export default function AdminUsers() {
           draft={draft} setDraft={setDraft} isEdit
           canSetOverall={Boolean(draft?._overall)}
           lockRoleAdminActive={Boolean(draft?._overall)}
+          onCancel={() => setEditOpen(false)}
           onSubmit={async () => {
             setErr(""); setMsg("");
             try {
@@ -530,8 +646,7 @@ export default function AdminUsers() {
               if (!draft._overall) {
                 patch.role = draft.role;
                 patch.admin_level = draft.role === "admin" ? (draft.admin_level || "normal") : "normal";
-                patch.device_approved = !!draft.device_approved;
-                patch.is_active = !!draft.is_active;
+                // NOTE: do NOT touch device_approved or is_active here.
               }
               if (draft.password) patch.password = draft.password;
 
@@ -539,8 +654,10 @@ export default function AdminUsers() {
               await getUsers({ all: true });
               setMsg(`Updated ${draft.name}`);
               setEditOpen(false);
+              Toast.fire({ icon: "success", title: `Updated ${draft.name}` });
             } catch (e) {
               setErr(e?.message || "Failed to update user");
+              Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e?.message || "Failed to update user" });
             } finally {
               setLoading(false);
             }
@@ -560,8 +677,10 @@ export default function AdminUsers() {
               await resetPassword(pwDraft.user_id, pwDraft.password);
               setMsg("Password reset successfully");
               setPwOpen(false);
+              Toast.fire({ icon: "success", title: "Password reset" });
             } catch (e2) {
               setErr(e2?.message || "Failed to reset password");
+              Swal.fire({ ...swalBase, icon: "error", title: "Failed", text: e2?.message || "Failed to reset password" });
             } finally {
               setLoading(false);
             }
@@ -604,7 +723,11 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
-function UserForm({ draft, setDraft, onSubmit, submitLabel = "Save", isEdit = false, canSetOverall = false, lockRoleAdminActive = false }) {
+function UserForm({
+  draft, setDraft, onSubmit, submitLabel = "Save",
+  isEdit = false, canSetOverall = false, lockRoleAdminActive = false,
+  onCancel,
+}) {
   const isAdminRole = (draft.role || "") === "admin";
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSubmit?.(); }} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -632,7 +755,11 @@ function UserForm({ draft, setDraft, onSubmit, submitLabel = "Save", isEdit = fa
         <label className="mb-1 block text-sm text-white/80">Role</label>
         <Select
           value={draft.role}
-          onChange={(e) => setDraft({ ...draft, role: e.target.value, admin_level: e.target.value === "admin" ? (draft.admin_level || "normal") : "normal" })}
+          onChange={(e) => setDraft({
+            ...draft,
+            role: e.target.value,
+            admin_level: e.target.value === "admin" ? (draft.admin_level || "normal") : "normal",
+          })}
           disabled={lockRoleAdminActive}
         >
           <option value="cashier">cashier</option>
@@ -664,7 +791,7 @@ function UserForm({ draft, setDraft, onSubmit, submitLabel = "Save", isEdit = fa
       </div>
 
       <div className="sm:col-span-2 mt-2 flex justify-end gap-2">
-        <button type="button" onClick={() => history.back()} className="rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10">Cancel</button>
+        <button type="button" onClick={onCancel} className="rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/10">Cancel</button>
         <button type="submit" className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow hover:shadow-lg">
           {submitLabel}
         </button>

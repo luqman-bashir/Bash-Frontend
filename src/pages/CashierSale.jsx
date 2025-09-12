@@ -17,8 +17,7 @@ import {
   Printer,
 } from "lucide-react";
 import Swal from "sweetalert2";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
+import { toast } from "react-toastify"; // ⬅️ no ToastContainer import
 
 import { useSaleContext } from "../contexts/SaleContext.jsx";
 import { usePackaging } from "../contexts/PackagingContext.jsx";
@@ -181,6 +180,26 @@ async function apiGet(path, token) {
   return res.json();
 }
 
+/* ---------------- Quick Button ---------------- */
+function QuickBtn({ children, onClick, title, active = false, disabled = false }) {
+  const base =
+    "inline-flex items-center gap-2 rounded-2xl px-3 py-2 border transition-colors shrink-0";
+  const normal = "border-white/10 hover:bg-white/5 text-white";
+  const selected = "bg-white text-gray-900 border-white";
+  const disabledCls = disabled ? "opacity-60 cursor-not-allowed" : "";
+  return (
+    <button
+      className={`${base} ${active ? selected : normal} ${disabledCls}`}
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      aria-pressed={active}
+    >
+      {children}
+    </button>
+  );
+}
+
 /* ---------------- main page ---------------- */
 
 export default function CashierSale() {
@@ -208,14 +227,13 @@ export default function CashierSale() {
     listItemsForSale,
     closeDispatch,
 
-    // 🔽 optional, if your context provides them
+    // optional
     listExpenses,
-    listCogsPurchases, // preferred
-    listCogs, // alt name some apps use (returns purchases rows)
-    fetchCogsSummary, // last-resort if it exposes purchases totals
+    listCogsPurchases,
+    listCogs,
+    fetchCogsSummary,
   } = useSaleContext();
 
-  // ⬇️ pull both bottleSizes (has selling_price) and sizeOptions (labels) for UX
   const { bottleSizes, sizeOptions, fetchBottleSizes, fetchBottleSizeOptions } = usePackaging();
 
   const [showSaleModal, setShowSaleModal] = useState(false);
@@ -226,13 +244,12 @@ export default function CashierSale() {
   const [draftFilters, setDraftFilters] = useState(filters);
   const [outstandingOnly, setOutstandingOnly] = useState(false);
 
-  // 🔢 totals for current range (independent of table filtering)
   const [expensesTotal, setExpensesTotal] = useState(0);
   const [cogsPurchasesTotal, setCogsPurchasesTotal] = useState(0);
 
   useEffect(() => setDraftFilters(filters), [filters]);
 
-  // ▶ Default to TODAY on first load + load sizes (for prices) + customers + expenses/cogs totals
+  // ▶ Default to TODAY on first load + load sizes + customers + totals
   useEffect(() => {
     (async () => {
       try {
@@ -245,11 +262,18 @@ export default function CashierSale() {
         ]);
       } catch {}
       fetchCustomers().catch(() => {});
-      // ensure we have prices available for the modal
       Promise.all([fetchBottleSizes(), fetchBottleSizeOptions()]).catch(() => {});
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Active range flags
+  const t = todayNairobi();
+  const y = yesterdayNairobi();
+  const { start: l7s, end: l7e } = last7DaysNairobi();
+  const isTodayActive = (filters?.date_from === t && filters?.date_to === t) || false;
+  const isYesterdayActive = (filters?.date_from === y && filters?.date_to === y) || false;
+  const isLast7Active = (filters?.date_from === l7s && filters?.date_to === l7e) || false;
 
   const refresh = () =>
     Promise.all([
@@ -267,56 +291,43 @@ export default function CashierSale() {
     ]).catch(() => {});
   };
 
-  const resetToToday = () =>
-    toast.promise(
-      (async () => {
-        setDateFiltersToToday();
-        await listTodaySales();
-        setOutstandingOnly(false);
-        const t = todayNairobi();
-        await Promise.all([
-          loadExpensesTotals({ date_from: t, date_to: t }),
-          loadCogsPurchasesTotals({ date_from: t, date_to: t }),
-        ]);
-      })(),
-      { pending: "Loading today…", success: "Showing today", error: "Failed to load today" }
-    );
+  // ⬇️ All three “range” actions now silent (no toast, just do the GET work)
+  const resetToToday = async () => {
+    try {
+      setDateFiltersToToday();
+      await listTodaySales();
+      setOutstandingOnly(false);
+      const tt = todayNairobi();
+      await Promise.all([
+        loadExpensesTotals({ date_from: tt, date_to: tt }),
+        loadCogsPurchasesTotals({ date_from: tt, date_to: tt }),
+      ]);
+    } catch {}
+  };
 
-  const jumpYesterday = () =>
-    toast.promise(
-      (async () => {
-        await listYesterdaySales();
-        setOutstandingOnly(false);
-        const y = yesterdayNairobi();
-        await Promise.all([
-          loadExpensesTotals({ date_from: y, date_to: y }),
-          loadCogsPurchasesTotals({ date_from: y, date_to: y }),
-        ]);
-      })(),
-      {
-        pending: "Loading yesterday…",
-        success: "Showing yesterday",
-        error: "Failed to load yesterday",
-      }
-    );
+  const jumpYesterday = async () => {
+    try {
+      await listYesterdaySales();
+      setOutstandingOnly(false);
+      const yy = yesterdayNairobi();
+      await Promise.all([
+        loadExpensesTotals({ date_from: yy, date_to: yy }),
+        loadCogsPurchasesTotals({ date_from: yy, date_to: yy }),
+      ]);
+    } catch {}
+  };
 
-  const jumpLast7 = () =>
-    toast.promise(
-      (async () => {
-        await listLast7DaysSales();
-        setOutstandingOnly(false);
-        const r = last7DaysNairobi();
-        await Promise.all([
-          loadExpensesTotals({ date_from: r.start, date_to: r.end }),
-          loadCogsPurchasesTotals({ date_from: r.start, date_to: r.end }),
-        ]);
-      })(),
-      {
-        pending: "Loading last 7 days…",
-        success: "Showing last 7 days",
-        error: "Failed to load last 7 days",
-      }
-    );
+  const jumpLast7 = async () => {
+    try {
+      await listLast7DaysSales();
+      setOutstandingOnly(false);
+      const r = last7DaysNairobi();
+      await Promise.all([
+        loadExpensesTotals({ date_from: r.start, date_to: r.end }),
+        loadCogsPurchasesTotals({ date_from: r.start, date_to: r.end }),
+      ]);
+    } catch {}
+  };
 
   const displayedSales = useMemo(() => {
     let arr = sales;
@@ -339,13 +350,12 @@ export default function CashierSale() {
     return { gross, paid, due };
   }, [displayedSales]);
 
-  // 🧮 Net Sales = Paid − (Expenses + COGS purchases) for current range
   const netSales = useMemo(
     () => Number(totals.paid || 0) - (Number(expensesTotal || 0) + Number(cogsPurchasesTotal || 0)),
     [totals.paid, expensesTotal, cogsPurchasesTotal]
   );
 
-  /* ------------ range-based totals loaders (context-first, fallback to API) ------------ */
+  /* ------------ range-based totals loaders ------------ */
 
   async function loadExpensesTotals(range) {
     const params = {
@@ -353,19 +363,15 @@ export default function CashierSale() {
       date_to: range?.date_to ?? filters?.date_to ?? "",
     };
 
-    // Try context function first
     if (typeof listExpenses === "function") {
       try {
         const res = await listExpenses(params);
         const arr = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
         setExpensesTotal((arr || []).reduce((a, e) => a + toNum(e?.amount), 0));
         return;
-      } catch {
-        // fall through to API fetch
-      }
+      } catch {}
     }
 
-    // Fallback: GET /api/expenses
     try {
       const token = getDefaultToken();
       const qs = new URLSearchParams({
@@ -386,31 +392,24 @@ export default function CashierSale() {
       date_to: range?.date_to ?? filters?.date_to ?? "",
     };
 
-    // Prefer explicit purchases list if available
     if (typeof listCogsPurchases === "function") {
       try {
         const res = await listCogsPurchases(params);
         const arr = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
         setCogsPurchasesTotal((arr || []).reduce((a, r) => a + toNum(r?.amount), 0));
         return;
-      } catch {
-        // fall through
-      }
+      } catch {}
     }
 
-    // Some apps expose `listCogs` returning purchase rows
     if (typeof listCogs === "function") {
       try {
         const res = await listCogs(params);
         const arr = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
         setCogsPurchasesTotal((arr || []).reduce((a, r) => a + toNum(r?.amount), 0));
         return;
-      } catch {
-        // fall through
-      }
+      } catch {}
     }
 
-    // Last-resort: if your summary includes purchases fields (totals only)
     if (typeof fetchCogsSummary === "function") {
       try {
         const s = await fetchCogsSummary(params);
@@ -422,12 +421,9 @@ export default function CashierSale() {
           0;
         setCogsPurchasesTotal(guess);
         return;
-      } catch {
-        // fall through
-      }
+      } catch {}
     }
 
-    // Fallback: GET /api/cogs (assumed purchases list)
     try {
       const token = getDefaultToken();
       const qs = new URLSearchParams({
@@ -463,42 +459,43 @@ export default function CashierSale() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5"
-            onClick={() =>
-              toast.promise(refresh(), {
-                pending: "Refreshing…",
-                success: "Up to date",
-                error: "Refresh failed",
-              })
-            }
+          <QuickBtn
+            onClick={() => {
+              // silent GET refresh
+              refresh();
+            }}
+            title="Refresh"
+            disabled={loading}
           >
             <RefreshCcw size={16} /> Refresh
-          </button>
+          </QuickBtn>
 
-          <button
-            className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5"
+          <QuickBtn
             onClick={resetToToday}
+            active={isTodayActive}
+            disabled={loading}
             title="Jump to today's sales (Africa/Nairobi)"
           >
             <CalendarDays size={16} /> Today
-          </button>
+          </QuickBtn>
 
-          <button
-            className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5"
+          <QuickBtn
             onClick={jumpYesterday}
+            active={isYesterdayActive}
+            disabled={loading}
             title="Show yesterday's sales (Africa/Nairobi)"
           >
             <CalendarDays size={16} /> Yesterday
-          </button>
+          </QuickBtn>
 
-          <button
-            className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 border border-white/10 hover:bg-white/5"
+          <QuickBtn
             onClick={jumpLast7}
+            active={isLast7Active}
+            disabled={loading}
             title="Show last 7 days (Africa/Nairobi)"
           >
             <CalendarDays size={16} /> Last 7 Days
-          </button>
+          </QuickBtn>
 
           <button
             className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 bg-white text-gray-900 hover:opacity-90"
@@ -534,7 +531,45 @@ export default function CashierSale() {
         onApply={applyFilters}
       />
 
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      {/* 📱 Mobile cards */}
+      <div className="md:hidden">
+        <SalesCards
+          sales={displayedSales}
+          loading={loading}
+          onPay={(s) => setShowPayModal(s)}
+          onDelete={(s) =>
+            Swal.fire({
+              title: "Delete this sale?",
+              text: "Stock will be returned to inventory.",
+              icon: "warning",
+              showCancelButton: true,
+              confirmButtonText: "Yes, delete",
+              cancelButtonText: "Cancel",
+              confirmButtonColor: "#ef4444",
+            }).then((r) => {
+              if (r.isConfirmed) {
+                toast.promise(deleteSale(s.id).then(refresh), {
+                  pending: "Deleting…",
+                  success: "Sale deleted",
+                  error: "Delete failed",
+                });
+              }
+            })
+          }
+          onRestore={(s) =>
+            toast.promise(restoreSale(s.id).then(refresh), {
+              pending: "Restoring…",
+              success: "Sale restored",
+              error: "Restore failed",
+            })
+          }
+          onCloseDispatch={(s) => setShowDispatchModal(s)}
+          onPrint={(s) => setShowPrinterModal(s)}
+        />
+      </div>
+
+      {/* 🖥️ Desktop table */}
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="hidden md:block">
         <SalesTable
           sales={displayedSales}
           loading={loading}
@@ -591,7 +626,6 @@ export default function CashierSale() {
             } catch {}
           }}
           customers={customers}
-          // ⬇️ pass both sizes (with prices) and options (labels)
           bottleSizes={bottleSizes}
           sizeOptions={sizeOptions}
         />
@@ -659,8 +693,6 @@ export default function CashierSale() {
           }}
         />
       )}
-
-      <ToastContainer position="top-right" theme="dark" autoClose={2500} />
     </div>
   );
 }
@@ -762,6 +794,91 @@ function FiltersBar({ draft, setDraft, outstandingOnly, setOutstandingOnly, onAp
   );
 }
 
+/* 📱 Mobile cards list */
+function SalesCards({
+  sales,
+  loading,
+  onPay,
+  onDelete,
+  onRestore,
+  onCloseDispatch,
+  onPrint,
+}) {
+  return (
+    <div className="grid gap-3">
+      {sales.map((s) => (
+        <div key={s.id} className="rounded-2xl border border-white/10 p-3 bg-white/5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs text-white/60">{formatDateTime(s.date)}</div>
+              <div className="mt-0.5 font-mono text-sm">{s.receipt_number}</div>
+              <div className="mt-1 text-sm truncate">{s.customer_name || "—"}</div>
+              <div className="mt-1 text-xs capitalize text-white/60">{s.sale_type}</div>
+            </div>
+            <div className="text-right">
+              <div className="font-semibold">{formatMoney(getGross(s))}</div>
+              <div className="text-xs text-white/60">
+                Paid {formatMoney(getPaid(s))} • Bal {formatMoney(getDue(s))}
+              </div>
+              <div className="mt-1">
+                {s.is_deleted ? (
+                  <span className="inline-flex rounded-full bg-rose-500/20 text-rose-300 px-2 py-0.5 text-[11px]">
+                    Deleted
+                  </span>
+                ) : (
+                  <span className="inline-flex rounded-full bg-emerald-500/20 text-emerald-300 px-2 py-0.5 text-[11px]">
+                    Active
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 inline-flex flex-wrap gap-2">
+            {!s.is_deleted && (
+              <button className="icon-btn" title="Print receipt" onClick={() => onPrint(s)}>
+                <Printer size={16} />
+              </button>
+            )}
+            {!s.is_deleted && (
+              <button className="icon-btn" title="Record payment" onClick={() => onPay(s)}>
+                <Banknote size={16} />
+              </button>
+            )}
+            {!s.is_deleted && (s.sale_type || "").toLowerCase() === "dispatch" && (
+              <button
+                className="icon-btn text-amber-300"
+                title="Close dispatch"
+                onClick={() => onCloseDispatch(s)}
+              >
+                <PackageCheck size={16} />
+              </button>
+            )}
+            {!s.is_deleted ? (
+              <button className="icon-btn text-rose-300" title="Delete" onClick={() => onDelete(s)}>
+                <Trash2 size={16} />
+              </button>
+            ) : (
+              <button
+                className="icon-btn text-emerald-300"
+                title="Restore"
+                onClick={() => onRestore(s)}
+              >
+                <RotateCcw size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      {sales.length === 0 && (
+        <div className="rounded-2xl border border-white/10 p-6 text-center text-white/60">
+          {loading ? "Loading…" : "No sales"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* 🖥️ Desktop table with horizontal scroll */
 function SalesTable({
   sales,
   loading,
@@ -775,88 +892,89 @@ function SalesTable({
 }) {
   return (
     <div className="rounded-2xl border border-white/10 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-white/5">
-          <tr>
-            <th className="px-3 py-2 text-left">Date</th>
-            <th className="px-3 py-2 text-left">Receipt</th>
-            <th className="px-3 py-2 text-left">Customer</th>
-            <th className="px-3 py-2 text-left">Type</th>
-            <th className="px-3 py-2 text-right">Gross</th>
-            <th className="px-3 py-2 text-right">Paid</th>
-            <th className="px-3 py-2 text-right">Balance</th>
-            <th className="px-3 py-2 text-left">Status</th>
-            <th className="px-3 py-2 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sales.map((s) => (
-            <tr key={s.id} className="border-t border-white/10">
-              <td className="px-3 py-2 align-top">{formatDateTime(s.date)}</td>
-              <td className="px-3 py-2 align-top font-mono">{s.receipt_number}</td>
-              <td className="px-3 py-2 align-top">{s.customer_name || ""}</td>
-              <td className="px-3 py-2 align-top capitalize">{s.sale_type}</td>
-              <td className="px-3 py-2 align-top text-right">{formatMoney(getGross(s))}</td>
-              <td className="px-3 py-2 align-top text-right">{formatMoney(getPaid(s))}</td>
-              <td className="px-3 py-2 align-top text-right">{formatMoney(getDue(s))}</td>
-              <td className="px-3 py-2 align-top">
-                {s.is_deleted ? (
-                  <span className="inline-flex rounded-full bg-rose-500/20 text-rose-300 px-2 py-0.5 text-xs">
-                    Deleted
-                  </span>
-                ) : (
-                  <span className="inline-flex rounded-full bg-emerald-500/20 text-emerald-300 px-2 py-0.5 text-xs">
-                    Active
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-2 align-top text-right">
-                <div className="inline-flex items-center gap-2">
-                  {!s.is_deleted && (
-                    <button className="icon-btn" title="Print to receipt printer" onClick={() => onPrint(s)}>
-                      <Printer size={16} />
-                    </button>
-                  )}
-                  {!s.is_deleted && (
-                    <button className="icon-btn" title="Record payment" onClick={() => onPay(s)}>
-                      <Banknote size={16} />
-                    </button>
-                  )}
-                  {!s.is_deleted && (s.sale_type || "").toLowerCase() === "dispatch" && (
-                    <button
-                      className="icon-btn text-amber-300"
-                      title="Close dispatch (enter returns & optional payment)"
-                      onClick={() => onCloseDispatch(s)}
-                    >
-                      <PackageCheck size={16} />
-                    </button>
-                  )}
-                  {!s.is_deleted ? (
-                    <button className="icon-btn text-rose-300" title="Delete" onClick={() => onDelete(s)}>
-                      <Trash2 size={16} />
-                    </button>
-                  ) : (
-                    <button className="icon-btn text-emerald-300" title="Restore" onClick={() => onRestore(s)}>
-                      <RotateCcw size={16} />
-                    </button>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))}
-          {sales.length === 0 && (
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[980px] text-sm">
+          <thead className="bg-white/5">
             <tr>
-              <td colSpan={9} className="px-3 py-8 text-center text-white/60">
-                {loading ? "Loading…" : "No sales"}
-              </td>
+              <th className="px-3 py-2 text-left">Date</th>
+              <th className="px-3 py-2 text-left">Receipt</th>
+              <th className="px-3 py-2 text-left">Customer</th>
+              <th className="px-3 py-2 text-left">Type</th>
+              <th className="px-3 py-2 text-right">Gross</th>
+              <th className="px-3 py-2 text-right">Paid</th>
+              <th className="px-3 py-2 text-right">Balance</th>
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
-          )}
-        </tbody>
-      </table>
-      <div className="flex items-center justify-between border-t border-white/10 px-3 py-2 text-sm">
-        <div>
-          Page {pagination.page} of {Math.max(1, pagination.pages || 1)}
-        </div>
+          </thead>
+          <tbody>
+            {sales.map((s) => (
+              <tr key={s.id} className="border-t border-white/10">
+                <td className="px-3 py-2 align-top">{formatDateTime(s.date)}</td>
+                <td className="px-3 py-2 align-top font-mono">{s.receipt_number}</td>
+                <td className="px-3 py-2 align-top">{s.customer_name || ""}</td>
+                <td className="px-3 py-2 align-top capitalize">{s.sale_type}</td>
+                <td className="px-3 py-2 align-top text-right">{formatMoney(getGross(s))}</td>
+                <td className="px-3 py-2 align-top text-right">{formatMoney(getPaid(s))}</td>
+                <td className="px-3 py-2 align-top text-right">{formatMoney(getDue(s))}</td>
+                <td className="px-3 py-2 align-top">
+                  {s.is_deleted ? (
+                    <span className="inline-flex rounded-full bg-rose-500/20 text-rose-300 px-2 py-0.5 text-xs">
+                      Deleted
+                    </span>
+                  ) : (
+                    <span className="inline-flex rounded-full bg-emerald-500/20 text-emerald-300 px-2 py-0.5 text-xs">
+                      Active
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2 align-top text-right">
+                  <div className="inline-flex items-center gap-2">
+                    {!s.is_deleted && (
+                      <button className="icon-btn" title="Print to receipt printer" onClick={() => onPrint(s)}>
+                        <Printer size={16} />
+                      </button>
+                    )}
+                    {!s.is_deleted && (
+                      <button className="icon-btn" title="Record payment" onClick={() => onPay(s)}>
+                        <Banknote size={16} />
+                      </button>
+                    )}
+                    {!s.is_deleted && (s.sale_type || "").toLowerCase() === "dispatch" && (
+                      <button
+                        className="icon-btn text-amber-300"
+                        title="Close dispatch (enter returns & optional payment)"
+                        onClick={() => onCloseDispatch(s)}
+                      >
+                        <PackageCheck size={16} />
+                      </button>
+                    )}
+                    {!s.is_deleted ? (
+                      <button className="icon-btn text-rose-300" title="Delete" onClick={() => onDelete(s)}>
+                        <Trash2 size={16} />
+                      </button>
+                    ) : (
+                      <button className="icon-btn text-emerald-300" title="Restore" onClick={() => onRestore(s)}>
+                        <RotateCcw size={16} />
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {sales.length === 0 && (
+              <tr>
+                <td colSpan={9} className="px-3 py-8 text-center text-white/60">
+                  {loading ? "Loading…" : "No sales"}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-t border-white/10 px-3 py-2 text-sm">
+        <div>Page {pagination.page} of {Math.max(1, pagination.pages || 1)}</div>
         <div className="flex gap-2">
           <button
             className="rounded-xl border border-white/10 px-2 py-1 disabled:opacity-40"
@@ -889,20 +1007,16 @@ function SaleModal({ onClose, onSubmit, customers, bottleSizes, sizeOptions }) {
     items: [{ bottle_size_id: "", quantity: "" }],
   }));
 
-  // Get official per-carton price.
   const getCartonPrice = (sizeId) => {
     const sid = Number(sizeId);
     if (!sid) return 0;
-    // Prefer bottleSizes (comes from /bottle-sizes and contains selling_price)
     const bs = (bottleSizes || []).find((b) => Number(b.id) === sid);
     if (bs && Number(bs.selling_price) > 0) return Number(bs.selling_price);
-    // Fallback: enriched sizeOptions (if your PackagingContext added selling_price there)
     const opt = (sizeOptions || []).find((o) => Number(o.id) === sid);
     if (opt && Number(opt.selling_price) > 0) return Number(opt.selling_price);
     return 0;
   };
 
-  // Live parse with totals
   const parsed = useMemo(() => {
     const rows = form.items.map((r) => {
       const qty = Math.max(0, Math.floor(Number(r.quantity) || 0));
@@ -914,7 +1028,6 @@ function SaleModal({ onClose, onSubmit, customers, bottleSizes, sizeOptions }) {
         line_total: qty * unit,
       };
     });
-    // grand totals
     const total = rows.reduce((a, b) => a + (b.line_total || 0), 0);
     const totalCartons = rows.reduce((a, b) => a + (b.quantity || 0), 0);
     return { rows, total, totalCartons };
@@ -934,7 +1047,6 @@ function SaleModal({ onClose, onSubmit, customers, bottleSizes, sizeOptions }) {
   const rmRow = (idx) =>
     setForm((s) => ({ ...s, items: s.items.filter((_, i) => i !== idx) }));
 
-  // Deduplicate by size on submit (same size rows → merge quantities)
   const makeSubmitItems = () => {
     const map = new Map();
     for (const r of parsed.rows) {
@@ -1103,29 +1215,23 @@ function SaleModal({ onClose, onSubmit, customers, bottleSizes, sizeOptions }) {
         </div>
       </div>
 
-      <div className="mt-4 flex justify-between items-center gap-2">
-        <div className="text-sm text-white/60"></div>
-        <div className="flex gap-2">
-          <button className="rounded-xl border border-white/10 px-3 py-2" onClick={onClose}>
-            Close
-          </button>
-          <button
-            disabled={!canSave}
-            className="inline-flex items-center gap-2 rounded-xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
-            onClick={() =>
-              onSubmit({
-                sale_type: form.sale_type,
-                customer_id: form.customer_id ? Number(form.customer_id) : undefined,
-                customer_name: form.customer_name?.trim() || undefined,
-                notes: form.notes?.trim() || undefined,
-                // Only send size + quantity. Backend applies official prices.
-                items: makeSubmitItems(),
-              })
-            }
-          >
-            <Save size={16} /> Save
-          </button>
-        </div>
+      {/* ⬇️ removed bottom Close; header Close remains */}
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          disabled={!canSave}
+          className="inline-flex items-center gap-2 rounded-xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
+          onClick={() =>
+            onSubmit({
+              sale_type: form.sale_type,
+              customer_id: form.customer_id ? Number(form.customer_id) : undefined,
+              customer_name: form.customer_name?.trim() || undefined,
+              notes: form.notes?.trim() || undefined,
+              items: makeSubmitItems(),
+            })
+          }
+        >
+          <Save size={16} /> Save
+        </button>
       </div>
     </Modal>
   );
@@ -1146,7 +1252,8 @@ function PaymentModal({ sale, onClose, onSubmit }) {
   const newPaid = paid + (Number.isFinite(amt) ? amt : 0);
   const newBalance = Math.max(0, gross - newPaid);
 
-  const allowedMethods = ["Cash", "M-Pesa", "Bank", "Other"];
+  // ⬇️ Only Cash & M-Pesa
+  const allowedMethods = ["Cash", "M-Pesa"];
   const canSave =
     String(form.amount).length > 0 &&
     amt >= 0 &&
@@ -1219,10 +1326,8 @@ function PaymentModal({ sale, onClose, onSubmit }) {
         </div>
       </div>
 
+      {/* ⬇️ removed bottom Close; header Close remains */}
       <div className="mt-4 flex justify-end gap-2">
-        <button className="rounded-xl border border-white/10 px-3 py-2" onClick={onClose}>
-          Close
-        </button>
         <button
           disabled={!canSave}
           className="inline-flex items-center gap-2 rounded-xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
@@ -1247,6 +1352,7 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
   const [amountPaid, setAmountPaid] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(""); // ⬅️ inline error instead of toast
 
   useEffect(() => {
     let mounted = true;
@@ -1259,7 +1365,7 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
         (items || []).forEach((it) => (init[it.bottle_size_id] = 0));
         setReturns(init);
       } catch {
-        toast.error("Failed to load dispatch items");
+        if (mounted) setErr("Failed to load dispatch items.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -1305,7 +1411,7 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
     !loading &&
     computed.details.every((d) => d.ret >= 0 && d.ret <= d.sent) &&
     (amountPaid === "" || Number(amountPaid) <= remaining) &&
-    ["Cash", "M-Pesa", "Bank", "Other"].includes(paymentMethod);
+    ["Cash", "M-Pesa"].includes(paymentMethod);
 
   return (
     <Modal onClose={onClose} title={`Close Dispatch — ${sale?.receipt_number || ""}`}>
@@ -1314,8 +1420,8 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
           Enter cartons returned for each size. We’ll compute sold quantities and new totals.
         </div>
 
-        <div className="rounded-2xl border border-white/10 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-2xl border border-white/10 overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-white/5">
               <tr>
                 <th className="px-3 py-2 text-left">Bottle Size</th>
@@ -1331,6 +1437,12 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-white/60">
                     Loading…
+                  </td>
+                </tr>
+              ) : err ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-rose-300">
+                    {err}
                   </td>
                 </tr>
               ) : (
@@ -1394,8 +1506,6 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
               >
                 <option value="Cash">Cash</option>
                 <option value="M-Pesa">M-Pesa</option>
-                <option value="Bank">Bank</option>
-                <option value="Other">Other</option>
               </select>
             </label>
             <div className="grid items-end">
@@ -1409,10 +1519,8 @@ function DispatchCloseModal({ sale, listItemsForSale, onClose, onSubmit }) {
         </div>
       </div>
 
+      {/* ⬇️ removed bottom Close; header Close remains */}
       <div className="mt-4 flex justify-end gap-2">
-        <button className="rounded-xl border border-white/10 px-3 py-2" onClick={onClose}>
-          Close
-        </button>
         <button
           disabled={!canSubmit}
           className="inline-flex items-center gap-2 rounded-xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
@@ -1447,7 +1555,8 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
   const [isReprint, setIsReprint] = useState(false);
 
   const [loading, setLoading] = useState(true);
-  const [receiptData, setReceiptData] = useState(null); // {sale, items, totals, print_text}
+  const [receiptData, setReceiptData] = useState(null);
+  const [err, setErr] = useState(""); // ⬅️ inline error instead of toast
 
   useEffect(() => {
     let mounted = true;
@@ -1457,7 +1566,7 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
         if (!mounted) return;
         setReceiptData(data || null);
       } catch {
-        toast.error("Failed to load receipt details");
+        if (mounted) setErr("Failed to load receipt details.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -1467,7 +1576,7 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
     };
   }, [sale?.id, getReceipt]);
 
-  const canSend = Number(copies) >= 1 && !loading;
+  const canSend = Number(copies) >= 1 && !loading && !err;
 
   const s = receiptData?.sale || {};
   const items = receiptData?.items || [];
@@ -1480,6 +1589,8 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
           <div className="text-xs text-white/60 mb-1">Summary</div>
           {loading ? (
             <div className="text-white/60">Loading…</div>
+          ) : err ? (
+            <div className="text-rose-300">{err}</div>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div>
@@ -1502,8 +1613,8 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
           )}
         </div>
 
-        <div className="rounded-2xl border border-white/10 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-2xl border border-white/10 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-white/5">
               <tr>
                 <th className="px-3 py-2 text-left">Item</th>
@@ -1513,10 +1624,10 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading || err ? (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-white/60">
-                    Loading…
+                    {loading ? "Loading…" : err}
                   </td>
                 </tr>
               ) : (
@@ -1542,8 +1653,8 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-white/70">
-            {loading ? (
-              "Loading totals…"
+            {loading || err ? (
+              loading ? "Loading totals…" : ""
             ) : (
               <>
                 Subtotal: {formatMoney(totals?.subtotal)} · Paid: {formatMoney(totals?.paid)} ·
@@ -1601,10 +1712,8 @@ function PrinterModal({ sale, getReceipt, onClose, onSubmit }) {
         </div>
       </div>
 
+      {/* ⬇️ removed bottom Close; header Close remains */}
       <div className="mt-4 flex justify-end gap-2">
-        <button className="rounded-xl border border-white/10 px-3 py-2" onClick={onClose}>
-          Close
-        </button>
         <button
           disabled={!canSend}
           className="inline-flex items-center gap-2 rounded-2xl bg-white text-gray-900 px-3 py-2 disabled:opacity-50"
