@@ -10,6 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/cli": "^7.4.3",
+    "@capacitor/core": "^7.4.3",
     "@fontsource/dancing-script": "^5.1.1",
     "@radix-ui/react-tooltip": "^1.1.8",
     "axios": "^1.11.0",
@@ -26,6 +29,7 @@
     "sweetalert2": "^11.22.4"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@eslint/js": "^9.17.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

@@ -13,3 +13,8 @@ coverage
 Thumbs.db
 .idea/
 .vscode/
+node_modules/
+dist/
+android/app/build/
+android/build/
+*.keystore
